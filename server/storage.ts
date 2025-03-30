@@ -2,6 +2,8 @@ import {
   users, type User, type InsertUser, 
   projects, type Project, type InsertProject, type UpdateProject 
 } from "@shared/schema";
+import { eq } from "drizzle-orm";
+import { db } from "./db";
 
 export interface IStorage {
   getUser(id: number): Promise<User | undefined>;
@@ -15,6 +17,59 @@ export interface IStorage {
   deleteProject(id: number): Promise<boolean>;
 }
 
+// Database connection is imported from db.ts
+
+export class DbStorage implements IStorage {
+  async getUser(id: number): Promise<User | undefined> {
+    const result = await db.select().from(users).where(eq(users.id, id));
+    return result[0];
+  }
+
+  async getUserByUsername(username: string): Promise<User | undefined> {
+    const result = await db.select().from(users).where(eq(users.username, username));
+    return result[0];
+  }
+
+  async createUser(insertUser: InsertUser): Promise<User> {
+    const result = await db.insert(users).values(insertUser).returning();
+    return result[0];
+  }
+
+  async getAllProjects(userId?: number): Promise<Project[]> {
+    if (userId !== undefined) {
+      return await db.select().from(projects).where(eq(projects.userId, userId));
+    }
+    return await db.select().from(projects);
+  }
+
+  async getProjectById(id: number): Promise<Project | undefined> {
+    const result = await db.select().from(projects).where(eq(projects.id, id));
+    return result[0];
+  }
+
+  async createProject(project: InsertProject): Promise<Project> {
+    const result = await db.insert(projects).values(project).returning();
+    return result[0];
+  }
+
+  async updateProject(id: number, updates: UpdateProject): Promise<Project | undefined> {
+    const now = new Date();
+    const result = await db
+      .update(projects)
+      .set({ ...updates, updatedAt: now })
+      .where(eq(projects.id, id))
+      .returning();
+    
+    return result[0];
+  }
+
+  async deleteProject(id: number): Promise<boolean> {
+    const result = await db.delete(projects).where(eq(projects.id, id)).returning();
+    return result.length > 0;
+  }
+}
+
+// For fallback in case database connection fails
 export class MemStorage implements IStorage {
   private users: Map<number, User>;
   private projects: Map<number, Project>;
@@ -61,8 +116,12 @@ export class MemStorage implements IStorage {
     const id = this.projectIdCounter++;
     const now = new Date();
     const newProject: Project = { 
-      ...project, 
-      id, 
+      id,
+      name: project.name, 
+      userId: project.userId ?? null,
+      html: project.html ?? "", 
+      css: project.css ?? "", 
+      javascript: project.javascript ?? "",
       createdAt: now, 
       updatedAt: now 
     };
@@ -78,7 +137,9 @@ export class MemStorage implements IStorage {
     
     const updatedProject: Project = {
       ...project,
-      ...updates,
+      html: updates.html ?? project.html,
+      css: updates.css ?? project.css,
+      javascript: updates.javascript ?? project.javascript,
       updatedAt: new Date()
     };
     
@@ -91,4 +152,15 @@ export class MemStorage implements IStorage {
   }
 }
 
-export const storage = new MemStorage();
+// Create and export the storage implementation
+let storage: IStorage;
+
+try {
+  console.log("Initializing database storage...");
+  storage = new DbStorage();
+} catch (error) {
+  console.error("Failed to initialize database storage. Falling back to in-memory storage:", error);
+  storage = new MemStorage();
+}
+
+export { storage };
